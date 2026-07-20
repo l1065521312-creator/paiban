@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>检验科排班管理系统</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @media print {
+    body { background: #fff !important; }
+    .no-print { display: none !important; }
+    .print-only { display: block !important; }
+    #printTitle { padding-top: 8px !important; padding-bottom: 16px !important; margin-bottom: 8px !important; }
+    #gridWrapper { overflow: visible !important; padding: 0 !important; }
+    #gridWrapper thead th:first-child,
+    #gridWrapper tbody td:first-child {
+      position: static !important;
+      background: #fff !important;
+    }
+    #gridWrapper table {
+      box-shadow: none !important; width: 100% !important;
+      border-collapse: separate !important;
+      border-spacing: 0 !important;
+      border: none !important;
+    }
+    #gridWrapper th, #gridWrapper td {
+      box-sizing: border-box !important;
+      min-width: 26px !important; height: 28px !important; padding: 2px 3px !important;
+      font-size: 12px !important;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+      border: 0.5px solid #000 !important;
+    }
+    .shift-主班 { background: #e74c3c !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .shift-副班 { background: #f39c12 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .shift-夜班 { background: #2c3e50 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .shift-值班 { background: #27ae60 !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .shift-值班二 { background: #3498db !important; color: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { size: A4 landscape; margin: 6mm; }
+  }
+  .print-only { display: none; }
+
+  /* Shift colors – matching desktop app */
+  .shift-主班 { background-color: #e74c3c !important; color: #fff; font-weight: 600; }
+  .shift-副班 { background-color: #f39c12 !important; color: #fff; font-weight: 600; }
+  .shift-夜班 { background-color: #2c3e50 !important; color: #fff; font-weight: 600; }
+  .shift-值班 { background-color: #27ae60 !important; color: #fff; font-weight: 600; }
+  .shift-值班二 { background-color: #3498db !important; color: #fff; font-weight: 600; }
+
+  @media screen {
+    #gridWrapper td { transition: background-color 0.1s; }
+    #gridWrapper table { border-collapse: collapse; }
+    #gridWrapper th, #gridWrapper td { border: 1px solid #d1d5db; }
+  }
+
+  .modal-overlay { background-color: rgba(0,0,0,0.45); }
+  .toast { animation: slideIn 0.3s ease-out; }
+  @keyframes slideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .member-tag { font-size: 11px; }
+  .person-drag-row { transition: opacity 0.15s; }
+  .person-drag-row.dragging { opacity: 0.4; }
+  .person-drag-row.drag-over { border-top: 2px solid #3b82f6; }
+  .drag-handle { cursor: grab; }
+  .drag-handle:active { cursor: grabbing; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen flex">
+
+<!-- ===== ADMIN SIDEBAR (hidden by default) ===== -->
+<div id="adminSidebar" class="hidden w-[300px] min-w-[300px] bg-white border-r border-gray-200 p-4 overflow-y-auto flex flex-col gap-3 z-10 no-print" style="max-height:100vh">
+  <h2 class="text-lg font-bold text-blue-600 text-center pb-2 border-b-2 border-blue-500">排班表 · 管理后台</h2>
+
+  <!-- 主副夜人员 -->
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-blue-500 pl-2">主副夜人员（副班日期）</h3>
+    <div id="mainPeopleList" class="flex flex-col gap-1 max-h-[200px] overflow-y-auto"></div>
+    <button onclick="addMainPerson()" class="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 self-start">+ 添加人员</button>
+  </div>
+
+  <!-- 值班一 -->
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-green-500 pl-2">值班一</h3>
+    <div id="dutyTeamsListA" class="flex flex-col gap-1 max-h-[140px] overflow-y-auto"></div>
+    <button onclick="addDutyTeamA()" class="px-3 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600 self-start">+ 添加值班一小组</button>
+  </div>
+
+  <!-- 值班二 -->
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-blue-400 pl-2">值班二</h3>
+    <div id="dutyTeamsListB" class="flex flex-col gap-1 max-h-[140px] overflow-y-auto"></div>
+    <button onclick="addDutyTeamB()" class="px-3 py-1 text-xs text-white rounded hover:opacity-90 self-start" style="background:#3498db">+ 添加值班二小组</button>
+  </div>
+
+  <!-- 间隔设置 -->
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-orange-400 pl-2">主副夜 — 班次间隔</h3>
+    <label class="flex items-center justify-between text-xs text-gray-600"><span>副班 → 夜班</span><input id="m_fn" type="number" min="0" max="30" value="0" onchange="onConfigChange()" class="w-16 px-2 py-1 border rounded text-xs text-center"></label>
+    <label class="flex items-center justify-between text-xs text-gray-600"><span>夜班 → 主班</span><input id="m_nz" type="number" min="0" max="30" value="2" onchange="onConfigChange()" class="w-16 px-2 py-1 border rounded text-xs text-center"></label>
+    <label class="flex items-center justify-between text-xs text-gray-600"><span>主班 → 副班</span><input id="m_zf" type="number" min="0" max="30" value="6" onchange="onConfigChange()" class="w-16 px-2 py-1 border rounded text-xs text-center"></label>
+    <div id="mainCycleInfo" class="text-[11px] text-gray-400 text-center py-0.5 bg-gray-50 rounded"></div>
+  </div>
+
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-green-500 pl-2">值班一 — 班次间隔</h3>
+    <label class="flex items-center justify-between text-xs text-gray-600"><span>值班 → 值班</span><input id="dutyIvA" type="number" min="0" max="30" value="2" onchange="onConfigChange()" class="w-16 px-2 py-1 border rounded text-xs text-center"></label>
+    <div id="dutyCycleInfoA" class="text-[11px] text-gray-400 text-center py-0.5 bg-gray-50 rounded"></div>
+  </div>
+
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-blue-400 pl-2">值班二 — 班次间隔</h3>
+    <label class="flex items-center justify-between text-xs text-gray-600"><span>值班二 → 值班二</span><input id="dutyIvB" type="number" min="0" max="30" value="2" onchange="onConfigChange()" class="w-16 px-2 py-1 border rounded text-xs text-center"></label>
+    <div id="dutyCycleInfoB" class="text-[11px] text-gray-400 text-center py-0.5 bg-gray-50 rounded"></div>
+  </div>
+
+  <!-- 月份切换 -->
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-gray-400 pl-2">查看月份</h3>
+    <div class="flex items-center gap-1">
+      <button onclick="changeMonth(-1)" class="flex-1 px-2 py-1 text-xs border rounded hover:bg-gray-100" title="上一月">◀ 上月</button>
+      <input type="month" id="sidebarMonthPicker" onchange="onSidebarMonthPickerChange()" class="flex-1 text-xs font-semibold text-gray-700 border rounded px-1 py-1 text-center min-w-0 bg-white">
+      <button onclick="changeMonth(1)" class="flex-1 px-2 py-1 text-xs border rounded hover:bg-gray-100" title="下一月">下月 ▶</button>
+    </div>
+    <button onclick="goToCurrentMonth()" class="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200 text-gray-600">回到本月</button>
+  </div>
+
+  <!-- 操作 -->
+  <div class="flex flex-col gap-1.5">
+    <h3 class="text-sm font-semibold text-gray-600 border-l-[3px] border-l-purple-400 pl-2">操作</h3>
+    <div class="flex gap-2">
+      <button onclick="window.print()" class="flex-1 px-3 py-1.5 text-xs bg-green-500 text-white rounded hover:bg-green-600">打印排班表</button>
+      <button onclick="resetAll()" class="flex-1 px-3 py-1.5 text-xs bg-red-500 text-white rounded hover:bg-red-600">重置</button>
+    </div>
+    <button onclick="exportData()" class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导出备份JSON</button>
+    <button onclick="importDataPrompt()" class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导入恢复JSON</button>
+  </div>
+</div>
+
+<!-- ===== MAIN CONTENT ===== -->
+<div class="flex-1 flex flex-col overflow-hidden" style="min-width:0">
+
+  <!-- Top bar -->
+  <header class="bg-white shadow-sm border-b px-4 py-2.5 flex items-center gap-2 flex-wrap no-print">
+    <button onclick="changeMonth(-1)" class="px-2 py-1 text-sm border rounded hover:bg-gray-100 text-gray-600 font-bold" title="上一月">◀</button>
+    <input type="month" id="monthPicker" onchange="onMonthPickerChange()" class="text-base font-bold text-gray-800 border rounded px-2 py-1 text-center min-w-[140px] bg-white">
+    <button onclick="changeMonth(1)" class="px-2 py-1 text-sm border rounded hover:bg-gray-100 text-gray-600 font-bold" title="下一月">▶</button>
+    <button onclick="goToCurrentMonth()" class="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200 text-gray-500">本月</button>
+    <span class="text-sm text-blue-600" id="todayInfo"></span>
+    <div class="ml-auto flex items-center gap-2">
+      <button onclick="window.print()" class="px-3 py-1.5 text-sm bg-white border rounded hover:bg-gray-50 text-gray-600">打印</button>
+      <button id="adminBtn" onclick="showLoginModal()" class="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 font-medium">管理员配置</button>
+      <button id="adminLogoutBtn" onclick="logout()" class="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 font-medium hidden">退出管理</button>
+      <span id="adminBadge" class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium hidden">管理</span>
+    </div>
+  </header>
+
+  <!-- Print title -->
+  <div id="printTitle" class="print-only text-center text-2xl font-bold pt-2 pb-4 mb-2"></div>
+
+  <!-- Grid -->
+  <div id="gridWrapper" class="flex-1 overflow-auto p-4 bg-gray-100"></div>
+
+  <!-- Legend -->
+  <div class="bg-white border-t px-4 py-2.5 flex gap-4 items-center flex-wrap no-print">
+    <div class="flex items-center gap-1.5 text-xs text-gray-600"><div class="w-3.5 h-3.5 rounded-sm" style="background:#e74c3c"></div>主班</div>
+    <div class="flex items-center gap-1.5 text-xs text-gray-600"><div class="w-3.5 h-3.5 rounded-sm" style="background:#f39c12"></div>副班</div>
+    <div class="flex items-center gap-1.5 text-xs text-gray-600"><div class="w-3.5 h-3.5 rounded-sm" style="background:#2c3e50"></div>夜班</div>
+    <div class="flex items-center gap-1.5 text-xs text-gray-600"><div class="w-3.5 h-3.5 rounded-sm" style="background:#27ae60"></div>值班一</div>
+    <div class="flex items-center gap-1.5 text-xs text-gray-600"><div class="w-3.5 h-3.5 rounded-sm" style="background:#3498db"></div>值班二</div>
+  </div>
+</div>
+
+<!-- ===== LOGIN MODAL ===== -->
+<div id="loginModal" class="fixed inset-0 z-50 flex items-center justify-center modal-overlay hidden">
+  <div class="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4 p-6">
+    <h3 class="text-lg font-bold text-gray-800 mb-4">管理员登录</h3>
+    <div class="mb-4">
+      <label class="block text-sm text-gray-600 mb-1">账号</label>
+      <input id="loginUser" type="text" value="admin" readonly class="w-full border rounded px-3 py-2 text-sm bg-gray-50 focus:outline-none">
+    </div>
+    <div class="mb-4">
+      <label class="block text-sm text-gray-600 mb-1">密码</label>
+      <input id="loginPass" type="password" placeholder="请输入密码" class="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" onkeydown="if(event.key==='Enter')login()">
+    </div>
+    <div id="loginError" class="text-red-500 text-xs mb-3 hidden">密码错误，请重试</div>
+    <div class="flex gap-2">
+      <button onclick="login()" class="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 font-medium text-sm">登录</button>
+      <button onclick="hideLoginModal()" class="px-4 py-2 border rounded hover:bg-gray-50 text-gray-600 text-sm">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== TOAST ===== -->
+<div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2"></div>
+
+<script>
+// ============================================================
+// DATA LAYER – compatible with original schedule_v6_state
+// ============================================================
+const STORAGE_KEY = 'schedule_v6_state';
+const ADMIN_KEY = 'lab_schedule_is_admin';
+const ADMIN_PASS = '*963.';
+
+let state = {
+  mainPeople: [
+    { name: '张三', fuDate: '2026-05-25' },
+    { name: '李四', fuDate: '2026-05-26' },
+    { name: '王五', fuDate: '2026-05-27' },
+  ],
+  dutyTeams: [
+    { members: ['赵六', '钱七'], anchorDate: '2026-05-25' },
+    { members: ['孙八'],           anchorDate: '2026-05-26' },
+  ],
+  dutyTeamsB: [
+    { members: ['周九'], anchorDate: '2026-05-25' },
+  ],
+  intervals: [0, 2, 6],
+  dutyInterval: 2,
+  dutyIntervalB: 2,
+  viewYear: new Date().getFullYear(),
+  viewMonth: new Date().getMonth(),
+};
+
+let isAdmin = localStorage.getItem(ADMIN_KEY) === '1';
+
+// --- Persistence ---
+function saveState() {
+  const data = JSON.stringify(state);
+  try { localStorage.setItem(STORAGE_KEY, data); } catch(e) {}
+  try {
+    const d = new Date(); d.setFullYear(d.getFullYear() + 10);
+    document.cookie = STORAGE_KEY + '=' + encodeURIComponent(data) + ';expires=' + d.toUTCString() + ';path=/';
+  } catch(e) {}
+}
+
+function loadState() {
+  let saved = null;
+  try { saved = localStorage.getItem(STORAGE_KEY); } catch(e) {}
+  if (!saved) {
+    try {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + STORAGE_KEY + '=([^;]*)'));
+      if (m) saved = decodeURIComponent(m[1]);
+    } catch(e) {}
+  }
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed.mainPeople && parsed.intervals) {
+        state = parsed;
+        if (!state.dutyTeamsB) state.dutyTeamsB = [];
+        if (state.dutyIntervalB === undefined) state.dutyIntervalB = 2;
+        // Backward compat: old data uses startDate/displayDays
+        if (!state.viewYear && state.startDate) {
+          const sd = parseDate(state.startDate);
+          state.viewYear = sd.getFullYear();
+          state.viewMonth = sd.getMonth();
+        }
+      }
+    } catch(e) {}
+  }
+}
+
+// --- Cycle builders ---
+function buildMainCycle() {
+  const shifts = ['副班', '夜班', '主班'];
+  const c = [];
+  for (let i = 0; i < 3; i++) { c.push(shifts[i]); for (let j = 0; j < state.intervals[i]; j++) c.push(null); }
+  return c;
+}
+function buildDutyCycle()     { const c = ['值班'];   for (let j = 0; j < state.dutyInterval;  j++) c.push(null); return c; }
+function buildDutyCycleB()    { const c = ['值班二']; for (let j = 0; j < state.dutyIntervalB; j++) c.push(null); return c; }
+
+function calcOffset(cycle, dayIdxFromStart, desiredShift) {
+  const cl = cycle.length;
+  const target = desiredShift === '休息' ? null : desiredShift;
+  for (let off = 0; off < cl; off++) {
+    if (cycle[((dayIdxFromStart - off) % cl + cl) % cl] === target) return off;
+  }
+  return 0;
+}
+function getShift(cycle, dayIndex, offset) {
+  return cycle[((dayIndex - offset) % cycle.length + cycle.length) % cycle.length];
+}
+
+// --- Date helpers ---
+function parseDate(str) { const [y,m,d]=str.split('-').map(Number); return new Date(y,m-1,d); }
+function formatDate(d) { const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; }
+function daysBetween(d1, d2) { return Math.round((d2 - d1) / 86400000); }
+function isToday(d) { const t=new Date(); return d.getFullYear()===t.getFullYear()&&d.getMonth()===t.getMonth()&&d.getDate()===t.getDate(); }
+function esc(str) { const div = document.createElement('div'); div.textContent = str; return div.innerHTML; }
+
+// ============================================================
+// RENDER
+// ============================================================
+function renderSidebar() {
+  const mainCycle = buildMainCycle();
+
+  // Main people
+  let html = '';
+  state.mainPeople.forEach((p, i) => {
+    html += `<div class="flex items-center gap-1 person-drag-row" draggable="true"
+             ondragstart="dragStart(event,${i})" ondragover="dragOver(event)" ondrop="dragDrop(event,${i})" ondragend="dragEnd()">
+      <span class="drag-handle text-gray-300 hover:text-gray-500 cursor-grab text-xs font-bold px-0.5 select-none" title="拖动排序">⋮⋮</span>
+      <span class="text-[11px] text-gray-400 w-7 text-center">${i+1}号</span>
+      <input type="text" value="${esc(p.name)}" placeholder="姓名" class="flex-1 min-w-0 px-1.5 py-1 border rounded text-xs"
+             onchange="updateMainPerson(${i},'name',this.value)" onclick="event.stopPropagation()">
+      <span class="text-[11px] font-medium whitespace-nowrap" style="color:#f39c12">副班</span>
+      <input type="date" value="${p.fuDate}" class="w-[110px] px-1 py-1 border rounded text-[11px]"
+             onchange="updateMainPerson(${i},'fuDate',this.value)" onclick="event.stopPropagation()">
+      <button onclick="removeMainPerson(${i})" class="text-red-400 hover:text-red-600 text-xs font-bold px-0.5" title="删除">x</button>
+    </div>`;
+  });
+  document.getElementById('mainPeopleList').innerHTML = html;
+
+  // Duty teams A
+  html = '';
+  state.dutyTeams.forEach((t, i) => {
+    html += `<div class="flex items-center gap-1 flex-wrap person-drag-row" draggable="true"
+             ondragstart="teamDragStart(event,${i},'A')" ondragover="dragOver(event)" ondrop="teamDragDrop(event,${i},'A')" ondragend="dragEnd(event)">
+      <span class="drag-handle text-gray-300 hover:text-gray-500 cursor-grab text-xs font-bold px-0.5 select-none" title="拖动排序">⋮⋮</span>
+      <span class="text-[11px] text-gray-400">小组${i+1}</span>
+      <span class="flex items-center gap-0.5 flex-wrap">`;
+    t.members.forEach((m, mi) => {
+      html += `<span class="inline-flex items-center gap-0.5 bg-green-50 text-green-700 text-[11px] px-1.5 py-0.5 rounded member-tag">${esc(m)}<button onclick="removeTeamMemberA(${i},${mi})" class="text-gray-400 hover:text-red-500 font-bold leading-none">x</button></span>`;
+    });
+    html += `<button onclick="addTeamMemberA(${i})" class="text-[11px] px-1 py-0 border rounded hover:bg-gray-100">+</button>`;
+    html += `</span>
+      <span class="text-[11px] font-medium whitespace-nowrap" style="color:#27ae60">值班</span>
+      <input type="date" value="${t.anchorDate}" class="w-[108px] px-1 py-1 border rounded text-[11px]" onchange="updateTeamAnchorA(${i},this.value)" onclick="event.stopPropagation()">
+      <button onclick="removeDutyTeamA(${i})" class="text-red-400 hover:text-red-600 text-xs font-bold px-0.5" title="删除">x</button>
+    </div>`;
+  });
+  document.getElementById('dutyTeamsListA').innerHTML = html;
+
+  // Duty teams B
+  html = '';
+  state.dutyTeamsB.forEach((t, i) => {
+    html += `<div class="flex items-center gap-1 flex-wrap person-drag-row" draggable="true"
+             ondragstart="teamDragStart(event,${i},'B')" ondragover="dragOver(event)" ondrop="teamDragDrop(event,${i},'B')" ondragend="dragEnd(event)">
+      <span class="drag-handle text-gray-300 hover:text-gray-500 cursor-grab text-xs font-bold px-0.5 select-none" title="拖动排序">⋮⋮</span>
+      <span class="text-[11px] text-gray-400">小组${i+1}</span>
+      <span class="flex items-center gap-0.5 flex-wrap">`;
+    t.members.forEach((m, mi) => {
+      html += `<span class="inline-flex items-center gap-0.5 bg-blue-50 text-blue-700 text-[11px] px-1.5 py-0.5 rounded member-tag">${esc(m)}<button onclick="removeTeamMemberB(${i},${mi})" class="text-gray-400 hover:text-red-500 font-bold leading-none">x</button></span>`;
+    });
+    html += `<button onclick="addTeamMemberB(${i})" class="text-[11px] px-1 py-0 border rounded hover:bg-gray-100">+</button>`;
+    html += `</span>
+      <span class="text-[11px] font-medium whitespace-nowrap" style="color:#3498db">值班二</span>
+      <input type="date" value="${t.anchorDate}" class="w-[108px] px-1 py-1 border rounded text-[11px]" onchange="updateTeamAnchorB(${i},this.value)" onclick="event.stopPropagation()">
+      <button onclick="removeDutyTeamB(${i})" class="text-red-400 hover:text-red-600 text-xs font-bold px-0.5" title="删除">x</button>
+    </div>`;
+  });
+  document.getElementById('dutyTeamsListB').innerHTML = html;
+
+  // Cycle info
+  document.getElementById('sidebarMonthPicker').value = `${state.viewYear}-${String(state.viewMonth+1).padStart(2,'0')}`;
+  document.getElementById('mainCycleInfo').textContent = `周期共 ${mainCycle.length} 天（副→夜→主→副）`;
+  document.getElementById('dutyCycleInfoA').textContent = `值班一周期共 ${buildDutyCycle().length} 天（值班→值班）`;
+  document.getElementById('dutyCycleInfoB').textContent = `值班二周期共 ${buildDutyCycleB().length} 天（值班二→值班二）`;
+}
+
+function renderGrid() {
+  const startDate = new Date(state.viewYear, state.viewMonth, 1);
+  const mainCycle = buildMainCycle();
+  const dutyCycle = buildDutyCycle();
+  const dutyCycleB = buildDutyCycleB();
+  const days = new Date(state.viewYear, state.viewMonth + 1, 0).getDate();
+
+  const dates = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(startDate);
+    d.setDate(d.getDate() + i);
+    dates.push(d);
+  }
+  const dateCells = dates.map(d => {
+    const day = d.getDate();
+    const wd = ['日','一','二','三','四','五','六'][d.getDay()];
+    const weekEnd = d.getDay() === 0 || d.getDay() === 6;
+    return { text: `${day}<br><small>${wd}</small>`, today: isToday(d), weekEnd };
+  });
+
+  let html = '<table class="border-collapse bg-white rounded-lg shadow-sm"><thead><tr><th class="border p-1.5 text-xs font-semibold text-gray-600 bg-gray-50 min-w-[44px] sticky left-0 z-10">日期</th>';
+  dateCells.forEach((dc, di) => {
+    let cls = 'border p-1 text-xs font-semibold bg-gray-50 min-w-[44px]';
+    if (dc.weekEnd) cls += dc.text.includes('日') ? ' text-red-500' : ' text-blue-500';
+    html += `<th class="${cls}">${dc.text}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  // Main people
+  state.mainPeople.forEach(p => {
+    const fuD = parseDate(p.fuDate);
+    const dayIdx = daysBetween(startDate, fuD);
+    const offset = calcOffset(mainCycle, dayIdx, '副班');
+    html += `<tr><td class="border p-1.5 text-xs font-medium text-gray-700 bg-gray-50 sticky left-0 min-w-[60px]">${esc(p.name)}</td>`;
+    dateCells.forEach((dc, di) => {
+      let cls = 'border p-1 text-xs text-center';
+      const shift = getShift(mainCycle, di, offset);
+      if (shift) { cls += ' shift-' + shift; html += `<td class="${cls}">${shift.replace('班','')}</td>`; }
+      else { html += `<td class="${cls}"></td>`; }
+    });
+    html += '</tr>';
+  });
+
+  // Duty teams A
+  state.dutyTeams.forEach(team => {
+    const anchorD = parseDate(team.anchorDate);
+    const dayIdx = daysBetween(startDate, anchorD);
+    const offset = calcOffset(dutyCycle, dayIdx, '值班');
+    team.members.forEach(m => {
+      html += `<tr><td class="border p-1.5 text-xs font-medium text-gray-700 bg-gray-50 sticky left-0 min-w-[60px]">${esc(m)}</td>`;
+      dateCells.forEach((dc, di) => {
+        let cls = 'border p-1 text-xs text-center';
+        const shift = getShift(dutyCycle, di, offset);
+        if (shift) { cls += ' shift-' + shift; html += `<td class="${cls}">值</td>`; }
+        else { html += `<td class="${cls}"></td>`; }
+      });
+      html += '</tr>';
+    });
+  });
+
+  // Duty teams B
+  state.dutyTeamsB.forEach(team => {
+    const anchorD = parseDate(team.anchorDate);
+    const dayIdx = daysBetween(startDate, anchorD);
+    const offset = calcOffset(dutyCycleB, dayIdx, '值班二');
+    team.members.forEach(m => {
+      html += `<tr><td class="border p-1.5 text-xs font-medium text-gray-700 bg-gray-50 sticky left-0 min-w-[60px]">${esc(m)}</td>`;
+      dateCells.forEach((dc, di) => {
+        let cls = 'border p-1 text-xs text-center';
+        const shift = getShift(dutyCycleB, di, offset);
+        if (shift) { cls += ' shift-' + shift; html += `<td class="${cls}">值</td>`; }
+        else { html += `<td class="${cls}"></td>`; }
+      });
+      html += '</tr>';
+    });
+  });
+
+  html += '</tbody></table>';
+  document.getElementById('gridWrapper').innerHTML = html;
+
+  // Title bar
+  document.getElementById('monthPicker').value = `${state.viewYear}-${String(state.viewMonth+1).padStart(2,'0')}`;
+  document.getElementById('todayInfo').textContent = `今天: ${formatDate(new Date())}`;
+  document.getElementById('printTitle').textContent = `${state.viewYear}年 ${state.viewMonth+1}月 值班表`;
+}
+
+function renderAll() {
+  if (isAdmin) renderSidebar();
+  renderGrid();
+  updateUI();
+}
+
+function updateUI() {
+  const sidebar = document.getElementById('adminSidebar');
+  const adminBtn = document.getElementById('adminBtn');
+  const logoutBtn = document.getElementById('adminLogoutBtn');
+  const badge = document.getElementById('adminBadge');
+
+  if (isAdmin) {
+    sidebar.classList.remove('hidden');
+    adminBtn.classList.add('hidden');
+    logoutBtn.classList.remove('hidden');
+    badge.classList.remove('hidden');
+  } else {
+    sidebar.classList.add('hidden');
+    adminBtn.classList.remove('hidden');
+    logoutBtn.classList.add('hidden');
+    badge.classList.add('hidden');
+  }
+}
+
+// ============================================================
+// SYNC FORM & CONFIG
+// ============================================================
+function syncFormFromState() {
+  document.getElementById('m_fn').value    = state.intervals[0];
+  document.getElementById('m_nz').value    = state.intervals[1];
+  document.getElementById('m_zf').value    = state.intervals[2];
+  document.getElementById('dutyIvA').value = state.dutyInterval;
+  document.getElementById('dutyIvB').value = state.dutyIntervalB;
+}
+
+function onConfigChange() {
+  state.intervals[0]  = parseInt(document.getElementById('m_fn').value) || 0;
+  state.intervals[1]  = parseInt(document.getElementById('m_nz').value) || 0;
+  state.intervals[2]  = parseInt(document.getElementById('m_zf').value) || 0;
+  state.dutyInterval  = parseInt(document.getElementById('dutyIvA').value) || 0;
+  state.dutyIntervalB = parseInt(document.getElementById('dutyIvB').value) || 0;
+  saveState(); renderAll();
+}
+
+// ============================================================
+// PERSONNEL MANAGEMENT
+// ============================================================
+function getMonthFirstDate() {
+  return formatDate(new Date(state.viewYear, state.viewMonth, 1));
+}
+
+function addMainPerson() {
+  const last = state.mainPeople[state.mainPeople.length - 1];
+  let nextDate;
+  if (last) { const d = parseDate(last.fuDate); d.setDate(d.getDate() + 1); nextDate = formatDate(d); }
+  else { nextDate = getMonthFirstDate(); }
+  state.mainPeople.push({ name: '新人' + (state.mainPeople.length + 1), fuDate: nextDate });
+  saveState(); renderAll();
+}
+function updateMainPerson(idx, field, value) {
+  if (field === 'name') { state.mainPeople[idx].name = value.trim() || '未命名'; }
+  else if (field === 'fuDate') {
+    const changedDate = parseDate(value);
+    const firstDate = new Date(changedDate);
+    firstDate.setDate(firstDate.getDate() - idx);
+    state.mainPeople.forEach((p, i) => {
+      const d = new Date(firstDate);
+      d.setDate(d.getDate() + i);
+      p.fuDate = formatDate(d);
+    });
+  }
+  saveState(); renderAll();
+}
+function removeMainPerson(idx) {
+  if (state.mainPeople.length <= 1) return;
+  state.mainPeople.splice(idx, 1);
+  saveState(); renderAll();
+}
+
+// --- Drag & Drop Reorder ---
+let dragData = null; // { srcIdx, list: 'main'|'A'|'B' }
+
+function dragStart(e, idx) {
+  dragData = { srcIdx: idx, list: 'main' };
+  e.target.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function teamDragStart(e, idx, list) {
+  dragData = { srcIdx: idx, list };
+  e.target.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function dragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const row = e.target.closest('.person-drag-row');
+  document.querySelectorAll('.person-drag-row').forEach(r => r.classList.remove('drag-over'));
+  if (row && !row.classList.contains('dragging')) row.classList.add('drag-over');
+}
+
+function dragDrop(e, targetIdx) {
+  e.preventDefault();
+  document.querySelectorAll('.person-drag-row').forEach(r => r.classList.remove('drag-over'));
+  if (!dragData || dragData.list !== 'main' || dragData.srcIdx === targetIdx) { dragData = null; return; }
+
+  const [moved] = state.mainPeople.splice(dragData.srcIdx, 1);
+  state.mainPeople.splice(targetIdx, 0, moved);
+  reorderMainDates();
+  dragData = null;
+  saveState(); renderAll();
+}
+
+function teamDragDrop(e, targetIdx, list) {
+  e.preventDefault();
+  document.querySelectorAll('.person-drag-row').forEach(r => r.classList.remove('drag-over'));
+  if (!dragData || dragData.list !== list || dragData.srcIdx === targetIdx) { dragData = null; return; }
+
+  const arr = list === 'A' ? state.dutyTeams : state.dutyTeamsB;
+  const [moved] = arr.splice(dragData.srcIdx, 1);
+  arr.splice(targetIdx, 0, moved);
+  reorderTeamDates(arr);
+  dragData = null;
+  saveState(); renderAll();
+}
+
+function reorderMainDates() {
+  const dates = state.mainPeople.map(p => parseDate(p.fuDate).getTime());
+  const minDate = new Date(Math.min(...dates));
+  state.mainPeople.forEach((p, i) => {
+    const d = new Date(minDate);
+    d.setDate(d.getDate() + i);
+    p.fuDate = formatDate(d);
+  });
+}
+
+function reorderTeamDates(arr) {
+  const dates = arr.map(t => parseDate(t.anchorDate).getTime());
+  const minDate = new Date(Math.min(...dates));
+  arr.forEach((t, i) => {
+    const d = new Date(minDate);
+    d.setDate(d.getDate() + i);
+    t.anchorDate = formatDate(d);
+  });
+}
+
+function dragEnd(e) {
+  e.target.classList.remove('dragging');
+  document.querySelectorAll('.person-drag-row').forEach(r => r.classList.remove('drag-over'));
+  dragData = null;
+}
+
+// --- Duty Teams A ---
+function addDutyTeamA() {
+  state.dutyTeams.push({ members: ['新人' + (state.dutyTeams.length + 1)], anchorDate: getMonthFirstDate() });
+  saveState(); renderAll();
+}
+function updateTeamAnchorA(idx, value) { state.dutyTeams[idx].anchorDate = value; saveState(); renderAll(); }
+function addTeamMemberA(ti) {
+  const name = prompt('输入新成员姓名：');
+  if (name && name.trim()) { state.dutyTeams[ti].members.push(name.trim()); saveState(); renderAll(); }
+}
+function removeTeamMemberA(ti, mi) {
+  if (state.dutyTeams[ti].members.length <= 1) { removeDutyTeamA(ti); return; }
+  state.dutyTeams[ti].members.splice(mi, 1);
+  saveState(); renderAll();
+}
+function removeDutyTeamA(idx) { state.dutyTeams.splice(idx, 1); saveState(); renderAll(); }
+
+// --- Duty Teams B ---
+function addDutyTeamB() {
+  state.dutyTeamsB.push({ members: ['新人' + (state.dutyTeamsB.length + 1)], anchorDate: getMonthFirstDate() });
+  saveState(); renderAll();
+}
+function updateTeamAnchorB(idx, value) { state.dutyTeamsB[idx].anchorDate = value; saveState(); renderAll(); }
+function addTeamMemberB(ti) {
+  const name = prompt('输入新成员姓名：');
+  if (name && name.trim()) { state.dutyTeamsB[ti].members.push(name.trim()); saveState(); renderAll(); }
+}
+function removeTeamMemberB(ti, mi) {
+  if (state.dutyTeamsB[ti].members.length <= 1) { removeDutyTeamB(ti); return; }
+  state.dutyTeamsB[ti].members.splice(mi, 1);
+  saveState(); renderAll();
+}
+function removeDutyTeamB(idx) { state.dutyTeamsB.splice(idx, 1); saveState(); renderAll(); }
+
+// ============================================================
+// BULK OPERATIONS
+// ============================================================
+function shiftAll(delta) {
+  state.mainPeople.forEach(p => { const d = parseDate(p.fuDate); d.setDate(d.getDate() + delta); p.fuDate = formatDate(d); });
+  state.dutyTeams.forEach(t => { const d = parseDate(t.anchorDate); d.setDate(d.getDate() + delta); t.anchorDate = formatDate(d); });
+  state.dutyTeamsB.forEach(t => { const d = parseDate(t.anchorDate); d.setDate(d.getDate() + delta); t.anchorDate = formatDate(d); });
+  saveState(); renderAll();
+}
+
+function resetAll() {
+  if (!confirm('重置后一切清零\n\n是否重置？')) return;
+  state = {
+    mainPeople: [
+      { name: '张三', fuDate: '2026-05-25' },
+      { name: '李四', fuDate: '2026-05-26' },
+      { name: '王五', fuDate: '2026-05-27' },
+    ],
+    dutyTeams: [
+      { members: ['赵六', '钱七'], anchorDate: '2026-05-25' },
+      { members: ['孙八'],           anchorDate: '2026-05-26' },
+    ],
+    dutyTeamsB: [
+      { members: ['周九'], anchorDate: '2026-05-25' },
+    ],
+    intervals: [0, 2, 6],
+    dutyInterval: 2,
+    dutyIntervalB: 2,
+    viewYear: new Date().getFullYear(),
+    viewMonth: new Date().getMonth(),
+  };
+  saveState(); syncFormFromState(); renderAll();
+}
+
+// ============================================================
+// IMPORT / EXPORT
+// ============================================================
+function exportData() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `排班表备份_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('备份已下载', 'success');
+}
+
+function importDataPrompt() {
+  if (!confirm('导入将覆盖当前所有数据，确定继续？')) return;
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data.mainPeople || !data.intervals) throw new Error('Invalid');
+        state = data;
+        if (!state.dutyTeamsB) state.dutyTeamsB = [];
+        if (state.dutyIntervalB === undefined) state.dutyIntervalB = 2;
+        saveState(); syncFormFromState(); renderAll();
+        showToast('数据已恢复', 'success');
+      } catch(err) { showToast('文件格式无效', 'error'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+// ============================================================
+// ADMIN AUTH
+// ============================================================
+function showLoginModal() {
+  document.getElementById('loginModal').classList.remove('hidden');
+  document.getElementById('loginPass').value = '';
+  document.getElementById('loginError').classList.add('hidden');
+  document.getElementById('loginPass').focus();
+}
+function hideLoginModal() { document.getElementById('loginModal').classList.add('hidden'); }
+function login() {
+  if (document.getElementById('loginPass').value === ADMIN_PASS) {
+    isAdmin = true;
+    localStorage.setItem(ADMIN_KEY, '1');
+    hideLoginModal();
+    renderAll();
+    showToast('登录成功，已进入管理模式', 'success');
+  } else {
+    document.getElementById('loginError').classList.remove('hidden');
+    document.getElementById('loginPass').value = '';
+    document.getElementById('loginPass').focus();
+  }
+}
+function logout() {
+  isAdmin = false;
+  localStorage.removeItem(ADMIN_KEY);
+  renderAll();
+  showToast('已退出管理模式', 'info');
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+function showToast(msg, type) {
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
+  el.className = `toast ${colors[type] || 'bg-gray-600'} text-white px-4 py-2 rounded shadow-lg text-sm font-medium`;
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 2500);
+}
+
+// ============================================================
+// INIT
+// ============================================================
+function changeMonth(delta) {
+  state.viewMonth += delta;
+  if (state.viewMonth < 0) { state.viewMonth = 11; state.viewYear--; }
+  if (state.viewMonth > 11) { state.viewMonth = 0; state.viewYear++; }
+  saveState(); renderAll();
+}
+
+function onMonthPickerChange() {
+  const val = document.getElementById('monthPicker').value;
+  if (!val) return;
+  const [y, m] = val.split('-').map(Number);
+  state.viewYear = y;
+  state.viewMonth = m - 1;
+  saveState(); renderAll();
+}
+
+function onSidebarMonthPickerChange() {
+  const val = document.getElementById('sidebarMonthPicker').value;
+  if (!val) return;
+  const [y, m] = val.split('-').map(Number);
+  state.viewYear = y;
+  state.viewMonth = m - 1;
+  saveState(); renderAll();
+}
+
+function goToCurrentMonth() {
+  const now = new Date();
+  state.viewYear = now.getFullYear();
+  state.viewMonth = now.getMonth();
+  saveState(); renderAll();
+}
+
+function init() {
+  loadState();
+  if (state.viewYear === undefined) {
+    state.viewYear = new Date().getFullYear();
+    state.viewMonth = new Date().getMonth();
+  }
+  syncFormFromState();
+  renderAll();
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') hideLoginModal();
+});
+
+init();
+</script>
+</body>
+</html>
