@@ -139,7 +139,9 @@
 <div class="flex-1 flex flex-col overflow-hidden" style="min-width:0">
 
   <!-- Top bar -->
-  <header class="bg-white shadow-sm border-b px-4 py-2.5 flex items-center gap-2 flex-wrap no-print">
+  <header class="bg-white shadow-sm border-b px-4 py-2.5 flex items-center gap-3 flex-wrap no-print">
+    <span class="text-lg font-bold text-blue-600 whitespace-nowrap" id="pageTitle">检验科排班管理系统</span>
+    <span class="text-gray-300">|</span>
     <button onclick="changeMonth(-1)" class="px-2 py-1 text-sm border rounded hover:bg-gray-100 text-gray-600 font-bold" title="上一月">◀</button>
     <input type="month" id="monthPicker" onchange="onMonthPickerChange()" class="text-base font-bold text-gray-800 border rounded px-2 py-1 text-center min-w-[140px] bg-white">
     <button onclick="changeMonth(1)" class="px-2 py-1 text-sm border rounded hover:bg-gray-100 text-gray-600 font-bold" title="下一月">▶</button>
@@ -154,7 +156,10 @@
   </header>
 
   <!-- Print title -->
-  <div id="printTitle" class="print-only text-center text-2xl font-bold pt-2 pb-4 mb-2"></div>
+  <div id="printTitle" class="print-only text-center pt-2 pb-4 mb-2">
+    <div class="text-2xl font-bold text-blue-600 mb-1">检验科排班管理系统</div>
+    <div id="printMonthLabel" class="text-base font-semibold text-gray-700"></div>
+  </div>
 
   <!-- Grid -->
   <div id="gridWrapper" class="flex-1 overflow-auto p-4 bg-gray-100"></div>
@@ -441,7 +446,7 @@ function renderGrid() {
   // Title bar
   document.getElementById('monthPicker').value = `${state.viewYear}-${String(state.viewMonth+1).padStart(2,'0')}`;
   document.getElementById('todayInfo').textContent = `今天: ${formatDate(new Date())}`;
-  document.getElementById('printTitle').textContent = `${state.viewYear}年 ${state.viewMonth+1}月 值班表`;
+  document.getElementById('printMonthLabel').textContent = `${state.viewYear}年 ${state.viewMonth+1}月 · 值班表`;
 }
 
 function renderAll() {
