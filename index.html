@@ -132,9 +132,23 @@
       <button onclick="window.print()" class="flex-1 px-3 py-1.5 text-xs bg-green-500 text-white rounded hover:bg-green-600">打印排班表</button>
       <button onclick="resetAll()" class="flex-1 px-3 py-1.5 text-xs bg-red-500 text-white rounded hover:bg-red-600">重置</button>
     </div>
-    <button onclick="bakeAndExport()" class="px-3 py-1.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 font-medium">固化数据并导出HTML</button>
-    <button onclick="exportData()" class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导出备份JSON</button>
-    <button onclick="importDataPrompt()" class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导入恢复JSON</button>
+    <div class="flex gap-2">
+      <button onclick="syncToCloud()" id="syncBtn" class="flex-1 px-3 py-1.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 font-medium">同步到云端</button>
+      <span id="syncStatus" class="text-[10px] text-gray-400 self-center"></span>
+    </div>
+    <button onclick="bakeAndExport()" class="px-3 py-1.5 text-xs bg-gray-400 text-white rounded hover:bg-gray-500">固化导出HTML（备用）</button>
+    <div class="flex gap-2">
+      <button onclick="exportData()" class="flex-1 px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导出备份JSON</button>
+      <button onclick="importDataPrompt()" class="flex-1 px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导入恢复JSON</button>
+    </div>
+    <div class="flex flex-col gap-1 pt-1 border-t border-gray-200">
+      <span class="text-[11px] text-gray-500">GitHub Token（用于云端同步）</span>
+      <div class="flex gap-1">
+        <input id="githubTokenInput" type="password" placeholder="输入GitHub Token..." class="flex-1 px-2 py-1 border rounded text-[11px]">
+        <button onclick="saveGitHubToken()" class="px-2 py-1 text-[11px] bg-blue-500 text-white rounded hover:bg-blue-600 whitespace-nowrap">保存</button>
+      </div>
+      <span id="tokenStatus" class="text-[10px] text-gray-400"></span>
+    </div>
   </div>
 </div>
 
@@ -733,6 +747,138 @@ function importDataPrompt() {
 }
 
 // ============================================================
+// CLOUD SYNC (GitHub API)
+// ============================================================
+function getGitHubToken() {
+  return localStorage.getItem('paiban_gh_token') || '';
+}
+
+function saveGitHubToken() {
+  const val = document.getElementById('githubTokenInput').value.trim();
+  if (val) {
+    localStorage.setItem('paiban_gh_token', val);
+    document.getElementById('tokenStatus').textContent = '已保存';
+    document.getElementById('tokenStatus').className = 'text-[10px] text-green-500';
+    showToast('GitHub Token 已保存', 'success');
+  } else {
+    localStorage.removeItem('paiban_gh_token');
+    document.getElementById('tokenStatus').textContent = '未设置';
+    document.getElementById('tokenStatus').className = 'text-[10px] text-gray-400';
+    showToast('Token 已清除', 'info');
+  }
+}
+
+function initTokenDisplay() {
+  const token = getGitHubToken();
+  const input = document.getElementById('githubTokenInput');
+  const status = document.getElementById('tokenStatus');
+  if (input && status) {
+    if (token) {
+      input.value = token;
+      status.textContent = '已保存';
+      status.className = 'text-[10px] text-green-500';
+    } else {
+      status.textContent = '未设置 · 点击获取: github.com/settings/tokens';
+      status.className = 'text-[10px] text-gray-400';
+    }
+  }
+  updateSyncStatus();
+}
+
+function updateSyncStatus() {
+  const lastSync = localStorage.getItem('paiban_last_sync');
+  const el = document.getElementById('syncStatus');
+  if (el && lastSync) {
+    el.textContent = '上次同步: ' + new Date(parseInt(lastSync)).toLocaleString('zh-CN');
+  }
+}
+
+async function syncToCloud() {
+  const token = getGitHubToken();
+  if (!token) {
+    alert('请先在下方输入 GitHub Personal Access Token\n\n获取方式:\n1. 打开 github.com/settings/tokens\n2. 点击 "Generate new token (classic)"\n3. 勾选 repo 权限\n4. 生成后将 Token 粘贴到下方输入框并保存');
+    document.getElementById('githubTokenInput').focus();
+    return;
+  }
+
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true;
+  btn.textContent = '同步中...';
+
+  try {
+    // Bake current state into DEFAULT_DATA
+    const exportState = JSON.parse(JSON.stringify(state));
+    const now = new Date();
+    exportState.viewYear = now.getFullYear();
+    exportState.viewMonth = now.getMonth();
+    const dataJson = JSON.stringify(exportState);
+
+    // Get current document HTML and replace DEFAULT_DATA
+    let html = document.documentElement.outerHTML;
+    const oldData = html.match(/const DEFAULT_DATA = (\{.*?\});/s);
+    if (!oldData) throw new Error('DEFAULT_DATA not found in HTML');
+    html = html.replace(oldData[1], dataJson);
+
+    const content = '<!DOCTYPE html>\n' + html;
+    const contentBytes = new TextEncoder().encode(content);
+
+    // Base64 encode (browser-safe UTF-8)
+    let binary = '';
+    contentBytes.forEach(b => binary += String.fromCharCode(b));
+    const contentBase64 = btoa(binary);
+
+    const owner = 'l1065521312-creator';
+    const repo = 'paiban';
+    const path = 'index.html';
+
+    // Step 1: Get current file SHA
+    const getResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+      headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (!getResp.ok) {
+      const err = await getResp.json().catch(() => ({}));
+      throw new Error('获取文件信息失败: ' + (err.message || getResp.status));
+    }
+    const fileInfo = await getResp.json();
+
+    // Step 2: Update file via GitHub Contents API
+    const updateResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: '从管理后台同步排班数据',
+        content: contentBase64,
+        sha: fileInfo.sha,
+        branch: 'master'
+      })
+    });
+
+    if (!updateResp.ok) {
+      const err = await updateResp.json().catch(() => ({}));
+      throw new Error('推送失败: ' + (err.message || updateResp.status));
+    }
+
+    // Also update the local DEFAULT_DATA so current page is consistent
+    // Save to localStorage for this device
+    saveState();
+
+    const syncTime = Date.now();
+    localStorage.setItem('paiban_last_sync', syncTime);
+    updateSyncStatus();
+    showToast('已同步到云端！其他设备刷新页面即可看到最新排班（约1-2分钟生效）', 'success');
+  } catch(e) {
+    showToast('同步失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '同步到云端';
+  }
+}
+
+// ============================================================
 // ADMIN AUTH
 // ============================================================
 function showLoginModal() {
@@ -818,6 +964,7 @@ function init() {
   }
   syncFormFromState();
   renderAll();
+  initTokenDisplay();
 }
 
 document.addEventListener('keydown', function(e) {
