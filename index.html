@@ -435,7 +435,12 @@
       <button onclick="importDataPrompt()" class="flex-1 px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导入恢复JSON</button>
     </div>
     <div class="flex flex-col gap-1 pt-1 border-t border-gray-200">
-      <span class="text-[11px] text-gray-500">GitHub Token（用于云端同步）</span>
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] text-gray-500">GitHub Token（用于云端同步）</span>
+        <label class="flex items-center gap-1 text-[10px] text-gray-400 cursor-pointer">
+          <input type="checkbox" id="autoSyncChk" onchange="toggleAutoSync()"> 自动同步
+        </label>
+      </div>
       <div class="flex gap-1">
         <input id="githubTokenInput" type="password" placeholder="输入GitHub Token..." class="flex-1 px-2 py-1 border rounded text-[11px]">
         <button onclick="saveGitHubToken()" class="px-2 py-1 text-[11px] bg-blue-500 text-white rounded hover:bg-blue-600 whitespace-nowrap">保存</button>
@@ -529,6 +534,29 @@ function saveState() {
     const d = new Date(); d.setFullYear(d.getFullYear() + 10);
     document.cookie = STORAGE_KEY + '=' + encodeURIComponent(data) + ';expires=' + d.toUTCString() + ';path=/';
   } catch(e) {}
+  // Auto-sync if enabled
+  if (localStorage.getItem('paiban_auto_sync') === '1' && getGitHubToken()) {
+    scheduleAutoSync();
+  }
+}
+
+let autoSyncTimer = null;
+function scheduleAutoSync() {
+  if (autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(() => {
+    autoSyncTimer = null;
+    syncToCloud();
+  }, 1500);
+}
+
+function toggleAutoSync() {
+  const enabled = document.getElementById('autoSyncChk').checked;
+  localStorage.setItem('paiban_auto_sync', enabled ? '1' : '0');
+  if (enabled && !getGitHubToken()) {
+    showToast('请先设置 GitHub Token', 'error');
+    document.getElementById('autoSyncChk').checked = false;
+    localStorage.setItem('paiban_auto_sync', '0');
+  }
 }
 
 function loadState() {
@@ -1071,10 +1099,13 @@ function initTokenDisplay() {
       status.textContent = '已保存';
       status.className = 'text-[10px] text-green-500';
     } else {
-      status.textContent = '未设置 · 点击获取: github.com/settings/tokens';
+      status.textContent = '未设置 · 获取: github.com/settings/tokens → 勾选repo → 生成';
       status.className = 'text-[10px] text-gray-400';
     }
   }
+  // Restore auto-sync checkbox
+  const chk = document.getElementById('autoSyncChk');
+  if (chk) chk.checked = localStorage.getItem('paiban_auto_sync') === '1';
   updateSyncStatus();
 }
 
@@ -1087,16 +1118,25 @@ function updateSyncStatus() {
 }
 
 async function syncToCloud() {
+  // Auto-save token from input if present
+  const inputVal = document.getElementById('githubTokenInput').value.trim();
+  if (inputVal && !getGitHubToken()) {
+    localStorage.setItem('paiban_gh_token', inputVal);
+    initTokenDisplay();
+  }
+
   const token = getGitHubToken();
   if (!token) {
-    alert('请先在下方输入 GitHub Personal Access Token\n\n获取方式:\n1. 打开 github.com/settings/tokens\n2. 点击 "Generate new token (classic)"\n3. 勾选 repo 权限\n4. 生成后将 Token 粘贴到下方输入框并保存');
+    showToast('请先在下方输入 GitHub Token 并保存', 'error');
     document.getElementById('githubTokenInput').focus();
     return;
   }
 
   const btn = document.getElementById('syncBtn');
+  const statusEl = document.getElementById('syncStatus');
   btn.disabled = true;
   btn.textContent = '同步中...';
+  if (statusEl) statusEl.textContent = '正在同步...';
 
   try {
     // Bake current state into DEFAULT_DATA
@@ -1123,19 +1163,22 @@ async function syncToCloud() {
     const owner = 'l1065521312-creator';
     const repo = 'paiban';
     const path = 'index.html';
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
 
     // Step 1: Get current file SHA
-    const getResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+    const getResp = await fetch(apiUrl, {
       headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' }
     });
     if (!getResp.ok) {
+      if (getResp.status === 401) throw new Error('Token 无效或已过期，请重新生成');
+      if (getResp.status === 404) throw new Error('仓库或文件不存在，请检查仓库是否为公开');
       const err = await getResp.json().catch(() => ({}));
-      throw new Error('获取文件信息失败: ' + (err.message || getResp.status));
+      throw new Error('获取文件失败 (HTTP ' + getResp.status + '): ' + (err.message || ''));
     }
     const fileInfo = await getResp.json();
 
     // Step 2: Update file via GitHub Contents API
-    const updateResp = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+    const updateResp = await fetch(apiUrl, {
       method: 'PUT',
       headers: {
         'Authorization': `token ${token}`,
@@ -1151,12 +1194,12 @@ async function syncToCloud() {
     });
 
     if (!updateResp.ok) {
+      if (updateResp.status === 401) throw new Error('Token 权限不足，需要 repo 或 public_repo 权限');
+      if (updateResp.status === 409) throw new Error('文件已被修改，请重新点击同步');
       const err = await updateResp.json().catch(() => ({}));
-      throw new Error('推送失败: ' + (err.message || updateResp.status));
+      throw new Error('推送失败 (HTTP ' + updateResp.status + '): ' + (err.message || ''));
     }
 
-    // Also update the local DEFAULT_DATA so current page is consistent
-    // Save to localStorage for this device
     saveState();
 
     const syncTime = Date.now();
@@ -1165,9 +1208,11 @@ async function syncToCloud() {
     showToast('已同步到云端！其他设备刷新页面即可看到最新排班（约1-2分钟生效）', 'success');
   } catch(e) {
     showToast('同步失败: ' + e.message, 'error');
+    console.error('syncToCloud error:', e);
   } finally {
     btn.disabled = false;
     btn.textContent = '同步到云端';
+    if (statusEl) updateSyncStatus();
   }
 }
 
