@@ -132,6 +132,7 @@
       <button onclick="window.print()" class="flex-1 px-3 py-1.5 text-xs bg-green-500 text-white rounded hover:bg-green-600">打印排班表</button>
       <button onclick="resetAll()" class="flex-1 px-3 py-1.5 text-xs bg-red-500 text-white rounded hover:bg-red-600">重置</button>
     </div>
+    <button onclick="bakeAndExport()" class="px-3 py-1.5 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 font-medium">固化数据并导出HTML</button>
     <button onclick="exportData()" class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导出备份JSON</button>
     <button onclick="importDataPrompt()" class="px-3 py-1.5 text-xs bg-gray-500 text-white rounded hover:bg-gray-600">导入恢复JSON</button>
   </div>
@@ -205,25 +206,11 @@ const STORAGE_KEY = 'schedule_v6_state';
 const ADMIN_KEY = 'lab_schedule_is_admin';
 const ADMIN_PASS = '*963.';
 
-let state = {
-  mainPeople: [
-    { name: '张三', fuDate: '2026-05-25' },
-    { name: '李四', fuDate: '2026-05-26' },
-    { name: '王五', fuDate: '2026-05-27' },
-  ],
-  dutyTeams: [
-    { members: ['赵六', '钱七'], anchorDate: '2026-05-25' },
-    { members: ['孙八'],           anchorDate: '2026-05-26' },
-  ],
-  dutyTeamsB: [
-    { members: ['周九'], anchorDate: '2026-05-25' },
-  ],
-  intervals: [0, 2, 6],
-  dutyInterval: 2,
-  dutyIntervalB: 2,
-  viewYear: new Date().getFullYear(),
-  viewMonth: new Date().getMonth(),
-};
+const DEFAULT_DATA = {"mainPeople":[{"name":"张三","fuDate":"2026-05-25"},{"name":"李四","fuDate":"2026-05-26"},{"name":"王五","fuDate":"2026-05-27"}],"dutyTeams":[{"members":["赵六","钱七"],"anchorDate":"2026-05-25"},{"members":["孙八"],"anchorDate":"2026-05-26"}],"dutyTeamsB":[{"members":["周九"],"anchorDate":"2026-05-25"}],"intervals":[0,2,6],"dutyInterval":2,"dutyIntervalB":2,"viewYear":2026,"viewMonth":6};
+
+let state = JSON.parse(JSON.stringify(DEFAULT_DATA));
+state.viewYear = new Date().getFullYear();
+state.viewMonth = new Date().getMonth();
 
 let isAdmin = localStorage.getItem(ADMIN_KEY) === '1';
 
@@ -238,7 +225,12 @@ function saveState() {
 }
 
 function loadState() {
+  // Start from the baked-in default data (shared across all devices)
+  state = JSON.parse(JSON.stringify(DEFAULT_DATA));
+
+  // Override with localStorage if present (device-specific edits)
   let saved = null;
+  let hasLocalData = false;
   try { saved = localStorage.getItem(STORAGE_KEY); } catch(e) {}
   if (!saved) {
     try {
@@ -250,10 +242,10 @@ function loadState() {
     try {
       const parsed = JSON.parse(saved);
       if (parsed.mainPeople && parsed.intervals) {
-        state = parsed;
+        Object.assign(state, parsed);
+        hasLocalData = true;
         if (!state.dutyTeamsB) state.dutyTeamsB = [];
         if (state.dutyIntervalB === undefined) state.dutyIntervalB = 2;
-        // Backward compat: old data uses startDate/displayDays
         if (!state.viewYear && state.startDate) {
           const sd = parseDate(state.startDate);
           state.viewYear = sd.getFullYear();
@@ -261,6 +253,11 @@ function loadState() {
         }
       }
     } catch(e) {}
+  }
+  // On fresh device (no localStorage), show current month
+  if (!hasLocalData || state.viewYear === undefined) {
+    state.viewYear = new Date().getFullYear();
+    state.viewMonth = new Date().getMonth();
   }
 }
 
@@ -674,6 +671,32 @@ function resetAll() {
 // ============================================================
 // IMPORT / EXPORT
 // ============================================================
+function bakeAndExport() {
+  // Build state data without viewYear/viewMonth (keep current as default)
+  const exportState = JSON.parse(JSON.stringify(state));
+  // Use current date as default view
+  const now = new Date();
+  exportState.viewYear = now.getFullYear();
+  exportState.viewMonth = now.getMonth();
+  const dataJson = JSON.stringify(exportState);
+
+  // Get current HTML and replace DEFAULT_DATA
+  let html = document.documentElement.outerHTML;
+  const oldData = html.match(/const DEFAULT_DATA = ({.*?});/s);
+  if (oldData) {
+    html = html.replace(oldData[1], dataJson);
+  }
+
+  const blob = new Blob(['<!DOCTYPE html>\n' + html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'index.html';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('已导出HTML文件，请复制到桌面并推送到GitHub', 'success');
+}
+
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
